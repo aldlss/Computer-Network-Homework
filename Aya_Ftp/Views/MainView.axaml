@@ -6,10 +6,69 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="Aya_Ftp.Views.MainView"
              x:DataType="vm:MainViewModel">
-  <Design.DataContext>
-    <!-- This only sets the DataContext for the previewer in an IDE,
+	<Design.DataContext>
+		<!-- This only sets the DataContext for the previewer in an IDE,
          to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-    <vm:MainViewModel />
-  </Design.DataContext>
+		<vm:MainViewModel />
+	</Design.DataContext>
+	<Border BorderBrush="Aqua" BorderThickness="2" Padding="10" Margin="8" CornerRadius="10" BoxShadow="0 0 10 4 #ccc" Background="AliceBlue">
+		<Grid>
+			<Grid.RowDefinitions>
+				<RowDefinition Height="*"/>
+				<RowDefinition Height="5*"/>
+				<RowDefinition Height="3*"/>
+			</Grid.RowDefinitions>
+
+			<StackPanel Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center" Grid.Row="0" Orientation="Horizontal">
+				<TextBlock VerticalAlignment="Center" Text="IP:"/>
+				<TextBox Text="{Binding Path=Host}" Watermark="localhost"/>
+				<TextBlock VerticalAlignment="Center" Text="Port:"/>
+				<TextBox Text="{Binding Path=Port}" Watermark="22"/>
+				<TextBlock VerticalAlignment="Center" Text="Username:"/>
+				<TextBox Text="{Binding Path=Username}" Watermark="anonymous"/>
+				<TextBlock VerticalAlignment="Center" Text="Password:"/>
+				<TextBox Text="{Binding Path=Password}" Watermark="默认为空"/>
+				<Button Command="{Binding Path=ConnectCommandButton}" Margin="30, 0, 0, 0" Content="{Binding Path=ConnectButtonText}" HorizontalContentAlignment="Center" Width="100"/>
+			</StackPanel>
+
+			<Grid Grid.Row="1" Margin="0, 15">
+				<Grid.RowDefinitions>
+					<RowDefinition Height="Auto"/>
+					<RowDefinition Height="*"/>
+					<RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+				<Grid.ColumnDefinitions>
+					<ColumnDefinition Width="*"/>
+					<ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+				<Grid Grid.Row="0" Grid.Column="0">
+					<Grid.ColumnDefinitions>
+						<ColumnDefinition Width="*"/>
+						<ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+					
+					<TextBox Grid.Column="0" Text="" Watermark="请输入本地路径"/>
+					<Button Grid.Column="1" HorizontalContentAlignment="Center" Content="……" Width="50"/>
+					
+                </Grid>
+            </Grid>
+
+			<Grid Grid.Row="2">
+				<Grid.RowDefinitions>
+					<RowDefinition Height="Auto"/>
+					<RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="状态：" FontSize="20"/>
+				
+                <Panel Grid.Row="1">
+					<ScrollViewer VerticalScrollBarVisibility="Auto">
+						<TextBox Text="{Binding Path=OutputLog}" Watermark="等待连接……" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap"/>
+                    </ScrollViewer>
+				</Panel>
+            </Grid>
+		</Grid>
+	</Border>
 
 </UserControl>
