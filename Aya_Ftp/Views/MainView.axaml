@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:Aya_Ftp.ViewModels"
+			 xmlns:model="clr-namespace:Aya_Ftp.Model"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="Aya_Ftp.Views.MainView"
              x:DataType="vm:MainViewModel">
@@ -32,7 +33,15 @@
 			</StackPanel>
 
 			<Grid Grid.Row="1" Margin="0, 15">
-				<Grid.RowDefinitions>
+				<Grid.Resources>
+                    <DataTemplate x:Key="FileListDataTemplate" DataType="model:LocalFile">
+                        <Panel>
+                            <TextBlock VerticalAlignment="Center" Text="{Binding Path=Name}"></TextBlock>
+                        </Panel>
+                    </DataTemplate>
+                </Grid.Resources>
+
+                <Grid.RowDefinitions>
 					<RowDefinition Height="Auto"/>
 					<RowDefinition Height="*"/>
 					<RowDefinition Height="Auto"/>
@@ -48,13 +57,29 @@
 						<ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 					
-					<TextBox Grid.Column="0" Text="" Watermark="请输入本地路径"/>
-					<Button Grid.Column="1" HorizontalContentAlignment="Center" Content="……" Width="50"/>
-					
+					<TextBox Grid.Column="0" Text="{Binding Path=LocalPath}" Watermark="请输入本地路径"/>
+					<Button Grid.Column="1" Command="{Binding Path=SelectLocalFolderCommand}" HorizontalContentAlignment="Center" Content="……" Width="50"/>
                 </Grid>
+
+				<ListBox Margin="5" Grid.Row="1" Grid.Column="0" SelectedItems="{Binding Path=SelectedFiles}" SelectionMode="Single" ItemsSource="{Binding Path=LocalFilesList}" ItemTemplate="{StaticResource FileListDataTemplate}"/>
+
+				<DockPanel Grid.Row="2" Grid.Column="0">
+					<Button Command="{Binding Path=UploadFileCommand}" DockPanel.Dock="Right" HorizontalAlignment="Right" Content="上传"/>
+                </DockPanel>
+
+                <DockPanel Grid.Row="0" Grid.Column="1" LastChildFill="False">
+					<TextBlock DockPanel.Dock="Left" Text="当前路径：/" FontSize="16" VerticalAlignment="Center"/>
+					<Button DockPanel.Dock="Right" Content="刷新" Command="{Binding Path=RefreshRemoteFilesCommand}"/>
+                </DockPanel>
+
+				<ListBox Margin="5" Grid.Row="1" Grid.Column="1" SelectedItems="{Binding Path=SelectedRemoteFiles}" SelectionMode="Single" ItemsSource="{Binding Path=RemoteFilesList}" ItemTemplate="{StaticResource FileListDataTemplate}"/>
+
+				<DockPanel Grid.Row="2" Grid.Column="1">
+                    <Button Command="{Binding Path=DownloadFileCommand}" HorizontalAlignment="Right" Content="下载"/>
+                </DockPanel>
             </Grid>
 
-			<Grid Grid.Row="2">
+            <Grid Grid.Row="2">
 				<Grid.RowDefinitions>
 					<RowDefinition Height="Auto"/>
 					<RowDefinition Height="*"/>
