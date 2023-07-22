@@ -20,6 +20,9 @@ namespace Aya_Ftp.ViewModels;
 public class MainViewModel : ViewModelBase
 {
     private string _outputLog;
+
+    private const int TimeoutSecond = 10;
+    private readonly TimeSpan _timeoutTimeSpan = TimeSpan.FromSeconds(TimeoutSecond);
     
     #region Connect
 
@@ -217,6 +220,17 @@ public class MainViewModel : ViewModelBase
         #endregion
     }
 
+    // 可能用到的变量：
+    private TcpClient? _cmdServer;
+    private TcpClient? _dataServer;
+    private NetworkStream? _cmdStreamWriter;
+    private StreamReader? _cmdStreamReader;
+    private NetworkStream? _dataStreamWriter;
+    private StreamReader? _dataStreamReader;
+    private byte[] _cmdData;
+
+    #region OutputLog
+
     private readonly StringBuilder _outputLogSb = new();
     /**
      * <summary>将一行文本输出到日志</summary>
@@ -228,15 +242,24 @@ public class MainViewModel : ViewModelBase
         OutputLog = _outputLogSb.ToString();
     }
 
-    // 可能用到的变量：
-    private TcpClient cmdServer;
-    private TcpClient dataServer;
-    private NetworkStream cmdStrmWtr;
-    private StreamReader cmdStrmRdr;
-    private NetworkStream dataStrmWtr;
-    private StreamReader dataStrmRdr;
-    private string cmdData;
-    private byte[] szData;
+    /**
+     * <summary>获取 FTP 的响应（发送指令后用），同时将指令输出至 Log</summary>
+     * <returns>获取到的响应的响应码，若出错返回 -1</returns>
+     */
+    private async Task<int> GetFtpResp()
+    {
+        if(_cmdStreamReader == null)
+            throw new Exception("未连接到服务器");
+        var resp = await _cmdStreamReader.ReadLineAsync();
+        if (resp is not null && resp.Length >= 3)
+        {
+            PrintLineToOutputLog(resp);
+            return int.Parse(resp.Substring(0, 3));
+        }
+        return -1;
+    }
+
+    #endregion
 
     #region Connect
 
@@ -295,8 +318,26 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<bool> FtpConnect(string host, string port, string username, string password)
     {
-        throw new NotImplementedException();
-        // TODO: 完善操作，将 Log 使用 PrintLineToOutputLog 输出
+        _cmdServer = new();
+        await _cmdServer.ConnectAsync(host, int.Parse(port)).WaitAsync(_timeoutTimeSpan);
+        _cmdStreamWriter = _cmdServer.GetStream();
+        _cmdStreamReader = new(_cmdServer.GetStream());
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        // 使用该行代码将指令转为可被服务端接收的格式
+        _cmdData = Encoding.ASCII.GetBytes($"USER {username}\n");
+        // 发送指令给服务端，并异步等待一定时间（这里是 10 秒）
+        await _cmdStreamWriter.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        // 获取服务端的响应，并输出至 Log
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = Encoding.ASCII.GetBytes($"PASS {password}\n");
+        await _cmdStreamWriter.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        // 判断服务端的响应码是否大于 500（即是否出错），出错返回错误
+        if (await GetFtpResp().WaitAsync(_timeoutTimeSpan) >= 500)
+            return false;
+        
+        return true;
     }
 
     /**
