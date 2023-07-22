@@ -24,7 +24,7 @@
 				<TextBlock VerticalAlignment="Center" Text="IP:"/>
 				<TextBox Text="{Binding Path=Host}" Watermark="localhost"/>
 				<TextBlock VerticalAlignment="Center" Text="Port:"/>
-				<TextBox Text="{Binding Path=Port}" Watermark="22"/>
+				<TextBox Text="{Binding Path=Port}" Watermark="21"/>
 				<TextBlock VerticalAlignment="Center" Text="Username:"/>
 				<TextBox Text="{Binding Path=Username}" Watermark="anonymous"/>
 				<TextBlock VerticalAlignment="Center" Text="Password:"/>

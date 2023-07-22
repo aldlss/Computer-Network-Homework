@@ -255,7 +255,7 @@ public class MainViewModel : ViewModelBase
         {
             var res = await FtpConnect(
                 Host == "" ? "localhost" : Host,
-                Port == "" ? "22" : Port,
+                Port == "" ? "21" : Port,
                 Username == "" ? "anonymous" : Username,
                 Password);
             Connected = res;
