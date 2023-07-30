@@ -395,8 +395,23 @@ public class MainViewModel : ViewModelBase
     */
     private async Task<bool> FtpDisconnect()
     {
-        throw new NotImplementedException();
-        // TODO
+        if (_cmdServer is null)
+            return true;
+        if (!_cmdServer.Connected)
+        {
+            _cmdServer = null;
+            return true;
+        }
+
+        _cmdData = "QUIT\n"u8.ToArray();
+        await _cmdStreamWriter!.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        _cmdStreamReader!.Close();
+        _cmdStreamWriter.Close();
+
+        _cmdServer = null;
+        return true;
     }
 
     #endregion
@@ -517,8 +532,36 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<bool> FtpDownloadFile(string localPath, string name)
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        string fileFullPath = Path.Join(localPath, name);
+        int len = 0;
+        if (File.Exists(fileFullPath))
+        {
+            FileInfo fileInfo = new(fileFullPath);
+            len = fileInfo.Length > 0 ? (int)fileInfo.Length : 0;
+        }
+        else File.Create(fileFullPath).Close();
+        
+        _cmdData = Encoding.ASCII.GetBytes($"REST {len}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp();
+
+        _cmdData = Encoding.ASCII.GetBytes($"RETR {name}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp();
+
+        FileStream fStream = new(fileFullPath, FileMode.Append);
+        byte[] buffer = new byte[1030];
+        int bytesRead = 0;
+        while ((bytesRead = _dataServer!.GetStream().Read(buffer, 0, buffer.Length)) > 0)
+        {
+            fStream.Write(buffer, 0, bytesRead);
+        }
+        fStream.Close();
+        
+        FtpDataDisconnect();
+        return true;
     }
 
     #endregion
