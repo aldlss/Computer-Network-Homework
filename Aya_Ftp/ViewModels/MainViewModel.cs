@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -10,6 +11,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using Avalonia.Controls.Documents;
+using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
 using Aya_Ftp.Model;
 using Aya_Ftp.Views;
@@ -244,21 +246,26 @@ public class MainViewModel : ViewModelBase
 
     /**
      * <summary>获取 FTP 的响应（发送指令后用），同时将指令输出至 Log</summary>
-     * <returns>获取到的响应的响应码，若出错返回 -1</returns>
+     * <returns>获取到的响应</returns>
      */
-    private async Task<int> GetFtpResp()
+    private async Task<string?> GetFtpResp()
     {
         if(_cmdStreamReader == null)
             throw new Exception("未连接到服务器");
         var resp = await _cmdStreamReader.ReadLineAsync();
-        if (resp is not null && resp.Length >= 3)
+        if (resp is not null)
         {
             PrintLineToOutputLog(resp);
-            return int.Parse(resp.Substring(0, 3));
         }
-        return -1;
+
+        return resp;
     }
 
+    private int GetRespCode(string resp)
+    {
+        return int.Parse(resp.Substring(0, 3));
+    }
+    
     #endregion
 
     #region Connect
@@ -308,6 +315,48 @@ public class MainViewModel : ViewModelBase
         Connecting = false;
     }
 
+    private async Task FtpDataConnect()
+    {
+        if (_cmdServer == null)
+            throw new Exception("未连接到服务器");
+        if (_dataServer is not null)
+            return;
+
+        _cmdData = "PASV\n"u8.ToArray();
+        await _cmdStreamWriter!.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        if (resp is null || GetRespCode(resp) != 227)
+            throw new Exception("PASV 指令失败");
+
+        var split = resp.Split(',');
+        var host = string.Join('.', split[..4]);
+        host = host.Split('(')[1];
+        var port = int.Parse(split[4]) * 256 + int.Parse(split[5][..^2]);
+
+        _dataServer = new();
+        await _dataServer.ConnectAsync(host, port).WaitAsync(_timeoutTimeSpan);
+        _dataStreamWriter = _dataServer.GetStream();
+        _dataStreamReader = new(_dataServer.GetStream());
+    }
+
+    private async void FtpDataDisconnect()
+    {
+        if(_dataServer is null)
+            return;
+
+        _dataStreamReader!.Close();
+        _dataStreamWriter!.Close();
+        await GetFtpResp();
+
+
+        _cmdData = "ABOR\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp();
+        _dataServer.Close();
+        _dataServer = null;
+    }
+
     /**
      * <summary>建立 ftp 连接</summary>
      * <param name="host">目标地址，可能为 IP 或域名</param>
@@ -334,9 +383,9 @@ public class MainViewModel : ViewModelBase
         _cmdData = Encoding.ASCII.GetBytes($"PASS {password}\n");
         await _cmdStreamWriter.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
         // 判断服务端的响应码是否大于 500（即是否出错），出错返回错误
-        if (await GetFtpResp().WaitAsync(_timeoutTimeSpan) >= 500)
+        var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+        if (resp == null || GetRespCode(resp) >= 500)
             return false;
-        
         return true;
     }
 
@@ -440,8 +489,24 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<List<LocalFile>> FtpListFiles()
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = "LIST\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+        
+        List<LocalFile> remoteFilesList = new();
+        while (await _dataStreamReader!.ReadLineAsync() is { } line)
+        {
+            var file = line.Split(' ');
+            remoteFilesList.Add(new LocalFile()
+            {
+                Name = file[^1]
+            });
+        }
+        
+        FtpDataDisconnect();
+        return remoteFilesList;
     }
 
     /**
