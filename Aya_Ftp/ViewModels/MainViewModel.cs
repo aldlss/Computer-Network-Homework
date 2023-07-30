@@ -1,17 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Reactive;
-using System.Reactive.Subjects;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Threading.Tasks;
-using Avalonia.Controls.Documents;
-using Avalonia.Metadata;
 using Avalonia.Platform.Storage;
 using Aya_Ftp.Model;
 using Aya_Ftp.Views;
@@ -347,12 +341,12 @@ public class MainViewModel : ViewModelBase
 
         _dataStreamReader!.Close();
         _dataStreamWriter!.Close();
-        await GetFtpResp();
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
 
 
         _cmdData = "ABOR\n"u8.ToArray();
         _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
-        await GetFtpResp();
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
         _dataServer.Close();
         _dataServer = null;
     }
@@ -460,9 +454,45 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<bool> FtpUploadFile(string fileFullPath, string name)
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = "LIST\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        int len = 0;
+        while (await _dataStreamReader!.ReadLineAsync() is { } line)
+        {
+            if (line.EndsWith($" {name}"))
+            {
+                var split = line.Split(" ");
+                len = int.Parse(split[^5]);
+            }
+        }
+
+        FtpDataDisconnect();
+        await Task.Delay(50);
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = Encoding.ASCII.GetBytes($"APPE {name}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        var fileStream = new FileStream(fileFullPath, FileMode.Open, FileAccess.Read);
+        fileStream.Seek(len, SeekOrigin.Begin);
+
+        byte[] buffer = new byte[1030];
+        int readLen;
+        while ((readLen = await fileStream.ReadAsync(buffer, 0, buffer.Length).WaitAsync(_timeoutTimeSpan)) > 0)
+        {
+            await _dataStreamWriter!.WriteAsync(buffer, 0, readLen).WaitAsync(_timeoutTimeSpan);
+        }
+        
+        fileStream.Close();
+        FtpDataDisconnect();
+        return true;
     }
+
     #endregion
 
     #region RemoteFile
@@ -545,18 +575,18 @@ public class MainViewModel : ViewModelBase
         
         _cmdData = Encoding.ASCII.GetBytes($"REST {len}\n");
         _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
-        await GetFtpResp();
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
 
         _cmdData = Encoding.ASCII.GetBytes($"RETR {name}\n");
         _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
-        await GetFtpResp();
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
 
         FileStream fStream = new(fileFullPath, FileMode.Append);
         byte[] buffer = new byte[1030];
         int bytesRead = 0;
         while ((bytesRead = _dataServer!.GetStream().Read(buffer, 0, buffer.Length)) > 0)
         {
-            fStream.Write(buffer, 0, bytesRead);
+            await fStream.WriteAsync(buffer, 0, bytesRead).WaitAsync(_timeoutTimeSpan);
         }
         fStream.Close();
         
