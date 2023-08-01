@@ -115,7 +115,9 @@ public class MainViewModel : ViewModelBase
 
     #region RemoteFile
 
-    private bool _downloading;
+    private string _remotePath = string.Empty;
+
+    private bool _downloading, _cwding;
 
     private List<LocalFile> _remoteFilesList = new();
 
@@ -124,6 +126,8 @@ public class MainViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> RefreshRemoteFilesCommand { get; }
 
     public ReactiveCommand<Unit, Unit> DownloadFileCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CwdCommand { get; }
 
     public List<LocalFile> RemoteFilesList
     {
@@ -135,6 +139,18 @@ public class MainViewModel : ViewModelBase
     {
         get => _downloading;
         set => this.RaiseAndSetIfChanged(ref _downloading, value);
+    }
+
+    public bool Cwding
+    {
+        get => _cwding;
+        set => this.RaiseAndSetIfChanged(ref _cwding, value);
+    }
+
+    public string RemotePath
+    {
+        get => _remotePath;
+        set => this.RaiseAndSetIfChanged(ref _remotePath, value);
     }
 
     #endregion
@@ -213,6 +229,9 @@ public class MainViewModel : ViewModelBase
             (downloading, connected, localPath) => !downloading && connected && Directory.Exists(localPath));
         DownloadFileCommand = ReactiveCommand.CreateFromTask(DownloadRemoteFile, canDownloadFile);
 
+        var canCwd = this.WhenAnyValue(x => x.Cwding, x => x.Connected, (cwding, connected) => !cwding && connected);
+        CwdCommand = ReactiveCommand.CreateFromTask(CdRemoteFolder, canCwd);
+
         #endregion
     }
 
@@ -283,6 +302,11 @@ public class MainViewModel : ViewModelBase
                 Username == "" ? "anonymous" : Username,
                 Password);
             Connected = res;
+            if (Connected)
+            {
+                RemotePath = "当前路径：/";
+                await RefreshRemoteFiles().WaitAsync(_timeoutTimeSpan);
+            }
         }
         catch(Exception e)
         {
@@ -526,6 +550,37 @@ public class MainViewModel : ViewModelBase
         }
 
         Downloading = false;
+    }
+
+    private async Task CdRemoteFolder()
+    {
+        if (SelectedRemoteFiles.Count == 0 )
+            return;
+        Cwding = true;
+        try
+        {
+            _cmdData = Encoding.ASCII.GetBytes($"CWD {SelectedRemoteFiles[0].Name}\n");
+            _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+            var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+            if (resp is not null && GetRespCode(resp) <= 500)
+            {
+                _cmdData = "PWD\n"u8.ToArray();
+                _cmdStreamWriter.Write(_cmdData, 0, _cmdData.Length);
+                resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+                if (resp is not null && GetRespCode(resp) <= 500)
+                {
+                    var split = resp.Split('"');
+                    RemotePath = $"当前路径：{split[1]}";
+                    await RefreshRemoteFiles().WaitAsync(_timeoutTimeSpan);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            PrintLineToOutputLog($"CdRemoteFolder {e.Message}");
+        }
+
+        Cwding = false;
     }
 
     /**
