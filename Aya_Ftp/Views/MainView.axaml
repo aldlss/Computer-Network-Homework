@@ -68,14 +68,15 @@
                 </DockPanel>
 
                 <DockPanel Grid.Row="0" Grid.Column="1" LastChildFill="False">
-					<TextBlock DockPanel.Dock="Left" Text="当前路径：/" FontSize="16" VerticalAlignment="Center"/>
+					<TextBlock DockPanel.Dock="Left" Text="{Binding Path=RemotePath}" FontSize="16" VerticalAlignment="Center"/>
 					<Button DockPanel.Dock="Right" Content="刷新" Command="{Binding Path=RefreshRemoteFilesCommand}"/>
                 </DockPanel>
 
 				<ListBox Margin="5" Grid.Row="1" Grid.Column="1" SelectedItems="{Binding Path=SelectedRemoteFiles}" SelectionMode="Single" ItemsSource="{Binding Path=RemoteFilesList}" ItemTemplate="{StaticResource FileListDataTemplate}"/>
 
 				<DockPanel Grid.Row="2" Grid.Column="1">
-                    <Button Command="{Binding Path=DownloadFileCommand}" HorizontalAlignment="Right" Content="下载"/>
+                    <Button Command="{Binding Path=DownloadFileCommand}" DockPanel.Dock="Right" HorizontalAlignment="Right" Content="下载"/>
+                    <Button Command="{Binding Path=CwdCommand}" DockPanel.Dock="Right" HorizontalAlignment="Right" Content="进入"/>
                 </DockPanel>
             </Grid>
 

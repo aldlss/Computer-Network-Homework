@@ -1,15 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Reactive;
-using System.Reactive.Subjects;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Threading.Tasks;
-using Avalonia.Controls.Documents;
 using Avalonia.Platform.Storage;
 using Aya_Ftp.Model;
 using Aya_Ftp.Views;
@@ -119,7 +115,9 @@ public class MainViewModel : ViewModelBase
 
     #region RemoteFile
 
-    private bool _downloading;
+    private string _remotePath = string.Empty;
+
+    private bool _downloading, _cwding;
 
     private List<LocalFile> _remoteFilesList = new();
 
@@ -128,6 +126,8 @@ public class MainViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> RefreshRemoteFilesCommand { get; }
 
     public ReactiveCommand<Unit, Unit> DownloadFileCommand { get; }
+
+    public ReactiveCommand<Unit, Unit> CwdCommand { get; }
 
     public List<LocalFile> RemoteFilesList
     {
@@ -139,6 +139,18 @@ public class MainViewModel : ViewModelBase
     {
         get => _downloading;
         set => this.RaiseAndSetIfChanged(ref _downloading, value);
+    }
+
+    public bool Cwding
+    {
+        get => _cwding;
+        set => this.RaiseAndSetIfChanged(ref _cwding, value);
+    }
+
+    public string RemotePath
+    {
+        get => _remotePath;
+        set => this.RaiseAndSetIfChanged(ref _remotePath, value);
     }
 
     #endregion
@@ -217,6 +229,9 @@ public class MainViewModel : ViewModelBase
             (downloading, connected, localPath) => !downloading && connected && Directory.Exists(localPath));
         DownloadFileCommand = ReactiveCommand.CreateFromTask(DownloadRemoteFile, canDownloadFile);
 
+        var canCwd = this.WhenAnyValue(x => x.Cwding, x => x.Connected, (cwding, connected) => !cwding && connected);
+        CwdCommand = ReactiveCommand.CreateFromTask(CdRemoteFolder, canCwd);
+
         #endregion
     }
 
@@ -244,21 +259,26 @@ public class MainViewModel : ViewModelBase
 
     /**
      * <summary>获取 FTP 的响应（发送指令后用），同时将指令输出至 Log</summary>
-     * <returns>获取到的响应的响应码，若出错返回 -1</returns>
+     * <returns>获取到的响应</returns>
      */
-    private async Task<int> GetFtpResp()
+    private async Task<string?> GetFtpResp()
     {
         if(_cmdStreamReader == null)
             throw new Exception("未连接到服务器");
         var resp = await _cmdStreamReader.ReadLineAsync();
-        if (resp is not null && resp.Length >= 3)
+        if (resp is not null)
         {
             PrintLineToOutputLog(resp);
-            return int.Parse(resp.Substring(0, 3));
         }
-        return -1;
+
+        return resp;
     }
 
+    private int GetRespCode(string resp)
+    {
+        return int.Parse(resp.Substring(0, 3));
+    }
+    
     #endregion
 
     #region Connect
@@ -282,6 +302,11 @@ public class MainViewModel : ViewModelBase
                 Username == "" ? "anonymous" : Username,
                 Password);
             Connected = res;
+            if (Connected)
+            {
+                RemotePath = "当前路径：/";
+                await RefreshRemoteFiles().WaitAsync(_timeoutTimeSpan);
+            }
         }
         catch(Exception e)
         {
@@ -306,6 +331,48 @@ public class MainViewModel : ViewModelBase
         }
 
         Connecting = false;
+    }
+
+    private async Task FtpDataConnect()
+    {
+        if (_cmdServer == null)
+            throw new Exception("未连接到服务器");
+        if (_dataServer is not null)
+            return;
+
+        _cmdData = "PASV\n"u8.ToArray();
+        await _cmdStreamWriter!.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        if (resp is null || GetRespCode(resp) != 227)
+            throw new Exception("PASV 指令失败");
+
+        var split = resp.Split(',');
+        var host = string.Join('.', split[..4]);
+        host = host.Split('(')[1];
+        var port = int.Parse(split[4]) * 256 + int.Parse(split[5][..^2]);
+
+        _dataServer = new();
+        await _dataServer.ConnectAsync(host, port).WaitAsync(_timeoutTimeSpan);
+        _dataStreamWriter = _dataServer.GetStream();
+        _dataStreamReader = new(_dataServer.GetStream());
+    }
+
+    private async void FtpDataDisconnect()
+    {
+        if(_dataServer is null)
+            return;
+
+        _dataStreamReader!.Close();
+        _dataStreamWriter!.Close();
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+
+        _cmdData = "ABOR\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+        _dataServer.Close();
+        _dataServer = null;
     }
 
     /**
@@ -334,9 +401,9 @@ public class MainViewModel : ViewModelBase
         _cmdData = Encoding.ASCII.GetBytes($"PASS {password}\n");
         await _cmdStreamWriter.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
         // 判断服务端的响应码是否大于 500（即是否出错），出错返回错误
-        if (await GetFtpResp().WaitAsync(_timeoutTimeSpan) >= 500)
+        var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+        if (resp == null || GetRespCode(resp) >= 500)
             return false;
-        
         return true;
     }
 
@@ -346,8 +413,23 @@ public class MainViewModel : ViewModelBase
     */
     private async Task<bool> FtpDisconnect()
     {
-        throw new NotImplementedException();
-        // TODO
+        if (_cmdServer is null)
+            return true;
+        if (!_cmdServer.Connected)
+        {
+            _cmdServer = null;
+            return true;
+        }
+
+        _cmdData = "QUIT\n"u8.ToArray();
+        await _cmdStreamWriter!.WriteAsync(_cmdData, 0, _cmdData.Length).WaitAsync(_timeoutTimeSpan);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        _cmdStreamReader!.Close();
+        _cmdStreamWriter.Close();
+
+        _cmdServer = null;
+        return true;
     }
 
     #endregion
@@ -396,9 +478,45 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<bool> FtpUploadFile(string fileFullPath, string name)
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = "LIST\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        int len = 0;
+        while (await _dataStreamReader!.ReadLineAsync() is { } line)
+        {
+            if (line.EndsWith($" {name}"))
+            {
+                var split = line.Split(" ");
+                len = int.Parse(split[^5]);
+            }
+        }
+
+        FtpDataDisconnect();
+        await Task.Delay(50);
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = Encoding.ASCII.GetBytes($"APPE {name}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        var fileStream = new FileStream(fileFullPath, FileMode.Open, FileAccess.Read);
+        fileStream.Seek(len, SeekOrigin.Begin);
+
+        byte[] buffer = new byte[1030];
+        int readLen;
+        while ((readLen = await fileStream.ReadAsync(buffer, 0, buffer.Length).WaitAsync(_timeoutTimeSpan)) > 0)
+        {
+            await _dataStreamWriter!.WriteAsync(buffer, 0, readLen).WaitAsync(_timeoutTimeSpan);
+        }
+        
+        fileStream.Close();
+        FtpDataDisconnect();
+        return true;
     }
+
     #endregion
 
     #region RemoteFile
@@ -434,14 +552,61 @@ public class MainViewModel : ViewModelBase
         Downloading = false;
     }
 
+    private async Task CdRemoteFolder()
+    {
+        if (SelectedRemoteFiles.Count == 0 )
+            return;
+        Cwding = true;
+        try
+        {
+            _cmdData = Encoding.ASCII.GetBytes($"CWD {SelectedRemoteFiles[0].Name}\n");
+            _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+            var resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+            if (resp is not null && GetRespCode(resp) <= 500)
+            {
+                _cmdData = "PWD\n"u8.ToArray();
+                _cmdStreamWriter.Write(_cmdData, 0, _cmdData.Length);
+                resp = await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+                if (resp is not null && GetRespCode(resp) <= 500)
+                {
+                    var split = resp.Split('"');
+                    RemotePath = $"当前路径：{split[1]}";
+                    await RefreshRemoteFiles().WaitAsync(_timeoutTimeSpan);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            PrintLineToOutputLog($"CdRemoteFolder {e.Message}");
+        }
+
+        Cwding = false;
+    }
+
     /**
      * <summary>获取服务端当前目录下的文件列表</summary>
      * <returns>服务端当前目录下的文件列表</returns>
      */
     private async Task<List<LocalFile>> FtpListFiles()
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = "LIST\n"u8.ToArray();
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+        
+        List<LocalFile> remoteFilesList = new();
+        while (await _dataStreamReader!.ReadLineAsync() is { } line)
+        {
+            var file = line.Split(' ');
+            remoteFilesList.Add(new LocalFile()
+            {
+                Name = file[^1]
+            });
+        }
+        
+        FtpDataDisconnect();
+        return remoteFilesList;
     }
 
     /**
@@ -452,8 +617,36 @@ public class MainViewModel : ViewModelBase
      */
     private async Task<bool> FtpDownloadFile(string localPath, string name)
     {
-        throw new NotImplementedException();
-        // TODO
+        await FtpDataConnect().WaitAsync(_timeoutTimeSpan);
+
+        string fileFullPath = Path.Join(localPath, name);
+        int len = 0;
+        if (File.Exists(fileFullPath))
+        {
+            FileInfo fileInfo = new(fileFullPath);
+            len = fileInfo.Length > 0 ? (int)fileInfo.Length : 0;
+        }
+        else File.Create(fileFullPath).Close();
+        
+        _cmdData = Encoding.ASCII.GetBytes($"REST {len}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        _cmdData = Encoding.ASCII.GetBytes($"RETR {name}\n");
+        _cmdStreamWriter!.Write(_cmdData, 0, _cmdData.Length);
+        await GetFtpResp().WaitAsync(_timeoutTimeSpan);
+
+        FileStream fStream = new(fileFullPath, FileMode.Append);
+        byte[] buffer = new byte[1030];
+        int bytesRead = 0;
+        while ((bytesRead = _dataServer!.GetStream().Read(buffer, 0, buffer.Length)) > 0)
+        {
+            await fStream.WriteAsync(buffer, 0, bytesRead).WaitAsync(_timeoutTimeSpan);
+        }
+        fStream.Close();
+        
+        FtpDataDisconnect();
+        return true;
     }
 
     #endregion
